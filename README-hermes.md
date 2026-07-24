@@ -62,6 +62,10 @@ At registration time, skill content is transformed:
 
 The upstream skills already enumerate multiple platforms (Claude Code, Codex, Antigravity, Pi) — Hermes is inserted into those same lists, not substituted.
 
+### Skill category
+
+Skills are installed under `~/.hermes/skills/software-development/compound-engineering/` so Hermes groups them under the **software-development** category in the skills list, consistent with other development skills.
+
 ## Update from upstream
 
 This fork automatically syncs with upstream daily via a GitHub Action (`.github/workflows/sync-upstream.yml`). To manually update:
