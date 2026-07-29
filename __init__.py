@@ -1,20 +1,24 @@
 """Compound Engineering plugin for Hermes Agent.
 
-Installs the bundled skills into ~/.hermes/skills/ via symlinks so Hermes's
+Installs the bundled skills into $HERMES_HOME/skills/ via symlinks so Hermes's
 native skill scanner picks them up with proper /slash-command invocation
 (lightning bolt icons, skill_view integration, context injection).
 
 The upstream skills/ directory is kept untouched for clean merges.
 At register() time, each skill is symlinked into
-~/.hermes/skills/software-development/compound-engineering/ and the native
+$HERMES_HOME/skills/software-development/compound-engineering/ and the native
 scanner handles the rest. The intermediate "software-development" directory
 makes Hermes group these skills under the software-development category
 in the skills list, consistent with other development skills.
+
+$HERMES_HOME defaults to ~/.hermes for non-containerized installs, but the
+official Docker image sets it to /opt/data.
 
 Also registers /ce-agents and /ce-agent as plugin slash commands for
 listing and loading agent personas.
 """
 
+import os
 import re
 import logging
 import shutil
@@ -28,7 +32,11 @@ _PLUGIN_DIR = Path(__file__).parent
 _SKILLS_DIR = _PLUGIN_DIR / "skills"
 _PLUGIN_NAME = "compound-engineering"
 _SKILL_CATEGORY = "software-development"
-_TARGET_SKILLS_DIR = Path.home() / ".hermes" / "skills" / _SKILL_CATEGORY / _PLUGIN_NAME
+
+# Use HERMES_HOME if set (official Docker image sets it to /opt/data),
+# otherwise fall back to ~/.hermes for non-containerized installs.
+_HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+_TARGET_SKILLS_DIR = _HERMES_HOME / "skills" / _SKILL_CATEGORY / _PLUGIN_NAME
 
 
 def _parse_frontmatter(content: str) -> dict:
@@ -52,7 +60,7 @@ def _install_skills():
     """Symlink each skill directory into the category-grouped skills dir.
 
     Skills are installed under
-    ~/.hermes/skills/software-development/compound-engineering/ so Hermes's
+    $HERMES_HOME/skills/software-development/compound-engineering/ so Hermes's
     native skill scanner groups them under the "software-development"
     category. This makes the native skill scanner pick them up, giving them
     lightning-bolt icons and proper /slash-command invocation.
