@@ -30,7 +30,7 @@ Or search for "compound engineering" in the plugin marketplace.
 Compound Engineering is not listed in Codex's built-in plugin marketplace yet. Add it as a custom marketplace:
 
 1. In the Codex app, open **Plugins** from the sidebar.
-2. Click **Add** / **Add plugin marketplace**.
+2. Click the arrow next to **Create**, then select **Add marketplace**.
 3. Enter:
 
    | Field | Value |
@@ -40,7 +40,7 @@ Compound Engineering is not listed in Codex's built-in plugin marketplace yet. A
    | Sparse paths | leave blank |
 
 4. Click **Add marketplace**.
-5. Select **Compound Engineering**, install **compound-engineering**, then restart Codex.
+5. Search for **Compound Engineering**, install **compound-engineering-plugin**, then restart Codex.
 
 The Codex app install is self-contained for Compound Engineering. Specialist reviewer and research behavior lives inside the skills as local prompt assets; no separate custom-agent install step is required.
 
@@ -103,6 +103,8 @@ Re-running the Bun convert/install CLI for Codex also strips the block if it is 
 
 **Each unit of engineering work should make subsequent units easier -- not harder.**
 
+Invocation syntax: this README uses `/skill-name` examples for slash-skill hosts. In Codex, invoke installed skills with `$skill-name` (for example, `$ce-plan` and `$lfg`); `/goal` remains a Codex built-in command.
+
 Traditional development accumulates technical debt. Every feature adds complexity. Every bug fix leaves behind a little more local knowledge that someone has to rediscover later. The codebase gets larger, the context gets harder to hold, and the next change becomes slower.
 
 Compound engineering inverts this. 80% is in planning and review, 20% is in execution:
@@ -135,6 +137,8 @@ The core loop is six steps: **brainstorm** the requirements, **plan** the implem
 
 Each cycle compounds: `/ce-compound` writes learnings that the next `/ce-brainstorm` and `/ce-plan` read as grounding -- brainstorms sharpen plans, plans inform future plans, reviews catch more issues, patterns get documented. That return arrow is the whole point.
 
+> Artifact folders like `docs/solutions/` and `docs/plans/` are the **defaults**. A project whose `docs/` is tracked content can relocate every CE artifact folder under one repo-relative root via the `docs_root` setting -- see [configuration](docs/skills/configuration.md#artifact-root).
+
 ### Additional skills
 
 These sit around the loop or get reached for on demand -- not every cycle needs them.
@@ -146,7 +150,7 @@ These sit around the loop or get reached for on demand -- not every cycle needs 
 | [`/ce-product-pulse`](docs/skills/ce-product-pulse.md) | *Outer loop* -- a time-windowed report on what users actually experienced (usage, performance, errors), saved to `docs/pulse-reports/`; its follow-ups feed back into ideation and brainstorming |
 | [`/ce-debug`](docs/skills/ce-debug.md) | *Instead of brainstorm -> plan -> work* when the input is a bug rather than a feature -- reproduce, trace root cause, fix, then polish/review before PR handoff when warranted |
 | [`/ce-pov`](docs/skills/ce-pov.md) | *On demand, before you commit* -- a decisive, project-grounded adoption verdict, holistic document take, or position on supplied approaches; optionally cross-checked by named peers or `oracle` through a blind initial round and bounded reconciliation |
-| [`/ce-explain`](docs/skills/ce-explain.md) | *On demand, to keep learning* -- turns a concept, a diff, an idea, or "what did I do this week?" into a dense, visual explainer written for you personally, with an optional check-in (predict-then-reveal for diffs, corrected exercises) that makes it stick |
+| [`/ce-explain`](docs/skills/ce-explain.md) | *On demand, to account for the work or understand it* -- turns a concept, a diff, an idea, or "what did I do this week?" into a dense, self-contained visual document built to keep, with an optional check-in (predict-then-reveal for diffs, corrected exercises) when the material is worth retaining |
 
 For the full catalog and how each skill chains together, see [docs/skills](docs/skills/README.md). The complete inventory is [below](#full-skill-inventory).
 
@@ -203,7 +207,7 @@ The first pass tightens recent branch changes before review. The targeted pass i
 
 After installing, run `/ce-setup` in any project. It checks repo-local config, reports optional tool capabilities, and helps keep machine-local CE settings safely gitignored.
 
-The `compound-engineering` plugin currently ships 31 skills and 0 standalone agents. Specialist review, research, and workflow behavior lives inside the owning skills as skill-local prompt assets.
+The `compound-engineering` plugin currently ships 32 skills. Its core workflows spawn specialist subagents on demand for research, review, planning, and implementation. Each skill seeds generic subagents with its own prompts instead of relying on standalone plugin agents, keeping the workflows portable across harnesses that handle formal agent definitions differently.
 
 ### Full Skill Inventory
 
@@ -212,7 +216,7 @@ The `compound-engineering` plugin currently ships 31 skills and 0 standalone age
 | [`/ce-strategy`](docs/skills/ce-strategy.md) | Create or maintain `STRATEGY.md` |
 | [`/ce-ideate`](docs/skills/ce-ideate.md) | Generate and critically evaluate grounded ideas |
 | [`/ce-pov`](docs/skills/ce-pov.md) | Form a decisive, project-grounded POV on an adoption, document, or approach set |
-| [`/ce-explain`](docs/skills/ce-explain.md) | Explain a concept, diff, idea, or window of your own work as a personal learning artifact |
+| [`/ce-explain`](docs/skills/ce-explain.md) | Document a concept, diff, idea, or window of your own work as a visual artifact built to keep |
 | [`/ce-brainstorm`](docs/skills/ce-brainstorm.md) | Explore requirements and write a right-sized requirements doc |
 | [`/ce-plan`](docs/skills/ce-plan.md) | Create structured implementation plans |
 | [`/ce-work`](docs/skills/ce-work.md) | Execute plans with native or cross-model implementation, durable progress, and transactional host-owned integration |
@@ -222,13 +226,14 @@ The `compound-engineering` plugin currently ships 31 skills and 0 standalone age
 | [`/ce-compound`](docs/skills/ce-compound.md) | Document solved problems to compound team knowledge |
 | [`/ce-compound-refresh`](docs/skills/ce-compound-refresh.md) | Refresh stale or drifting learnings |
 | [`/ce-optimize`](docs/skills/ce-optimize.md) | Run iterative optimization loops |
+| [`/ce-retune`](docs/skills/ce-retune.md) | Retune a skill corpus for a new model, measurement-first |
 | [`/ce-product-pulse`](docs/skills/ce-product-pulse.md) | Generate time-windowed product pulse reports |
 | [`/ce-riffrec-feedback-analysis`](docs/skills/ce-riffrec-feedback-analysis.md) | Convert Riffrec recordings or notes into structured feedback |
 | [`/ce-sweep`](docs/skills/ce-sweep.md) | Sweep feedback sources, track item lifecycles, and emit an `/lfg`-ready plan |
 | [`/ce-resolve-pr-feedback`](docs/skills/ce-resolve-pr-feedback.md) | Resolve PR review feedback |
 | [`/ce-commit`](docs/skills/ce-commit.md) | Create a git commit with a clear message |
-| [`/ce-commit-push-pr`](docs/skills/ce-commit-push-pr.md) | Commit, push, and open a PR that teaches any concept the change newly introduces |
-| [`/ce-babysit-pr`](docs/skills/ce-babysit-pr.md) | Watch an open PR and keep it moving toward merge, reacting to review comments and CI as they arrive |
+| [`/ce-commit-push-pr`](docs/skills/ce-commit-push-pr.md) | Commit, push, and open a PR (or construct/submit an opt-in managed stack) that teaches any concept the change newly introduces |
+| [`/ce-babysit-pr`](docs/skills/ce-babysit-pr.md) | Watch an open PR (or confirmed managed stack under posture) and keep it moving toward merge, reacting to review comments and CI as they arrive |
 | [`/ce-worktree`](docs/skills/ce-worktree.md) | Ensure work happens in an isolated git worktree |
 | [`/ce-promote`](docs/skills/ce-promote.md) | Draft user-facing announcement copy |
 | [`/ce-test-browser`](docs/skills/ce-test-browser.md) | Run browser tests on PR-affected pages |
@@ -510,7 +515,7 @@ bun run codex:dev -- remove
 
 The script derives the repository path, so it works from checkouts in any location, including paths with spaces. It inherits the active `CODEX_HOME`; set `CODEX_HOME` on the command when testing an isolated profile. Run every mode against the same `CODEX_HOME` you use to launch Codex.
 
-Do not use `codex plugin marketplace add "$PWD"` as a local-development shortcut. This repository's committed `.agents/plugins/marketplace.json` intentionally points Compound Engineering back to the public Git repository, so installing from that marketplace can still cache remote content. A matching manifest version also does not prove the cache matches the worktree.
+Do not use `codex plugin marketplace add "$PWD"` for live local development. It installs a cached copy of this checkout, so later edits are not reflected until the plugin is installed again; a matching manifest version also does not prove the cache matches the worktree. The `codex:dev` workflow instead keeps Codex linked to the current skill files.
 
 </details>
 

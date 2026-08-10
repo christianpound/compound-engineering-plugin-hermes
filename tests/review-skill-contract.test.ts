@@ -141,6 +141,7 @@ describe("ce-code-review contract", () => {
     expect(content).toContain("mode:agent")
     expect(content).toContain("apply:local")
     expect(content).toContain("mode:headless")
+    expect(content).toMatch(/mode:non-interactive` is \*\*not\*\* an alias for `mode:agent`/i)
     expect(content).toContain('SCRATCH_ROOT="/tmp/compound-engineering-$(id -u)"')
     expect(content).toContain('RUN_DIR="$SCRATCH_ROOT/ce-code-review/$RUN_ID"')
     expect(content).toMatch(/Never push, open PRs, or file tickets/i)
@@ -390,12 +391,43 @@ describe("ce-code-review contract", () => {
     expect(content).toMatch(/Bounded foreground dispatch/)
     expect(content).toMatch(/active-agent\/thread\/concurrency-limit spawn errors as backpressure/)
     expect(content).toMatch(/background execution off/)
-    expect(content).not.toMatch(/parallel dispatch|bounded parallel scheduler/i)
+    // Default is a concurrent foreground batch sized to the host cap, degrading to serial
+    // where the harness does not run same-message calls concurrently — not strict serial.
+    expect(content).toMatch(/foreground concurrent batch/i)
+    expect(content).toMatch(/degrades to serial/i)
+    expect(content).not.toMatch(/exactly one reviewer|one reviewer at a time|one at a time/i)
+    // The anti-poll ban targets detached bash/CLI delegate polling, not subagent concurrency,
+    // so the rationale must name the detached delegate rather than forbid concurrency itself.
+    expect(content).toMatch(/detached/i)
     // Exceptions are restated at point of action so the agent does not have to recall them
     // from the Model tiering subsection above while advancing the foreground queue.
     expect(content).toContain("correctness-reviewer")
     expect(content).toContain("security-reviewer")
     expect(content).toContain("adversarial-reviewer")
+  })
+
+  test("Stage 4 concurrent-batch dispatch preserves cap-safety and determinism", async () => {
+    const content = await readRepoFile(
+      "skills/ce-code-review/references/dispatch-reviewers.md",
+    )
+
+    // Batch size is learned from the host, never a fixed constant, so it can't overrun a cap.
+    expect(content).toMatch(/never hard-code a number/i)
+    expect(content).toMatch(/active-agent cap/i)
+
+    // A requested batch larger than the host cap clamps and drops no reviewer (restores #1031's
+    // backpressure guarantee per batch slot instead of the strict pool-of-one).
+    expect(content).toMatch(/dropping no reviewer/i)
+    expect(content).toMatch(/retried in a later batch/i)
+
+    // Determinism does not depend on completion order: findings are order-independent and
+    // stable numbers are assigned downstream after the post-merge sort.
+    expect(content).toMatch(/completion order cannot change any finding/i)
+    expect(content).toMatch(/after the post-merge sort/i)
+
+    // Anti-poll invariant still holds: no sleep/status/wakeup loops to await reviewers.
+    expect(content).toMatch(/scheduled wakeups/i)
+    expect(content).toMatch(/still waiting/i)
   })
 
   test("Stage 5 synthesis uses anchor gate and one-anchor promotion", async () => {
@@ -467,7 +499,7 @@ describe("ce-code-review contract", () => {
     // Act stage is separately authorized; bare and mode:agent invocations stay report-only.
     expect(content).toContain("### Stage 5c: Act on findings")
     expect(content).toMatch(/Skip unless local apply was explicitly authorized/i)
-    expect(content).toMatch(/bare `\/ce-code-review`.{0,80}does not apply/i)
+    expect(content).toMatch(/bare `ce-code-review` invocation.{0,80}does not apply/i)
     expect(content).toMatch(/`mode:agent` does not apply fixes/i)
 
     // Bias to act, push back if wrong, no deny-list
@@ -503,7 +535,7 @@ describe("ce-code-review contract", () => {
     expect(content).toMatch(/Production-file presence alone[\s\S]*non-behavioral edits do not select/i)
     expect(content).toMatch(/maintainability-reviewer.*(large|structural|refactor)/i)
     expect(content).toMatch(/agent-native-reviewer.*agent-facing/i)
-    expect(content).toMatch(/learnings-researcher.*docs\/solutions/i)
+    expect(content).toMatch(/learnings-researcher.*<root>\/solutions/i)
 
     expect(catalog).toContain("## Core and standards gate")
     expect(catalog).toContain("## Generic conditional")
@@ -867,7 +899,7 @@ describe("ce-code-review contract", () => {
 
       // Accept-and-proceed path threads findings into the PR description.
       expect(workflow).toContain("Known Residuals")
-      expect(workflow).toContain("docs/residual-review-findings/<branch-or-head-sha>.md")
+      expect(workflow).toContain("<root>/residual-review-findings/<branch-or-head-sha>.md")
       expect(workflow).toContain("If the user later chooses the no-PR `ce-commit` path")
       expect(workflow).toContain("must not live only in the transient session")
     }
@@ -905,7 +937,7 @@ describe("ce-code-review contract", () => {
     expect(lfg).toContain("never the PR body")
     expect(lfg).not.toContain("gh pr edit PR_NUMBER --body-file BODY_FILE")
     expect(lfg).toContain("## Residual Review Findings")
-    expect(lfg).toContain("docs/residual-review-findings/<branch-or-head-sha>.md")
+    expect(lfg).toContain("<root>/residual-review-findings/<branch-or-head-sha>.md")
     expect(lfg).toContain("first configured remote")
     expect(lfg).toContain("git push --set-upstream <remote> HEAD")
     expect(lfg).not.toContain("git push --set-upstream origin HEAD")
@@ -914,6 +946,9 @@ describe("ce-code-review contract", () => {
     // Step 9 delegates CI to ce-babysit-pr pipeline mode; the hand-rolled
     // CI-watch loop is retired.
     expect(lfg).toContain("ce-babysit-pr mode:pipeline")
+    expect(lfg).toMatch(/Stack handoff from step 8/i)
+    expect(lfg).toMatch(/never treat "started" as DONE/i)
+    expect(lfg).toMatch(/bottom open non-draft[\s\S]{0,120}posture:stack-ready[\s\S]{0,80}posture:stack-land/i)
     expect(lfg).not.toContain("gh pr checks --watch")
 
     // Shipping precondition: a remote-less repo (e.g. a sandbox/throwaway checkout)
@@ -1089,6 +1124,37 @@ describe("cross-model peer skip legibility", () => {
       reference: "skills/ce-doc-review/references/cross-model-review.md",
     },
   ]
+
+  // The route-token vocabulary lives in each worker's route_target() case, but
+  // the references forbid inspecting worker source — so each reference must
+  // enumerate every accepted fixed-route token itself (issue #1282: an
+  // orchestrator guessed `codex-cli` and wasted a dispatch cycle). ce-pov
+  // shares the vocabulary but not the review-worker internals the rest of
+  // this describe pins, so it joins only this parity check.
+  const routeTokenPairs = [
+    ...pairs,
+    {
+      worker: "skills/ce-pov/scripts/cross-model-pov.sh",
+      reference: "skills/ce-pov/references/cross-model-panel.md",
+    },
+  ]
+  for (const { worker, reference } of routeTokenPairs) {
+    test(`${reference} enumerates the worker's accepted fixed-route tokens`, async () => {
+      const workerSrc = await readRepoFile(worker)
+      const caseBody = workerSrc.match(/route_target\(\) \{\s*case "\$1" in([\s\S]*?)esac/)?.[1]
+      expect(caseBody).toBeTruthy()
+      const tokens = [...caseBody!.matchAll(/^\s*([a-z|-]+)\)/gm)]
+        .flatMap((m) => m[1].split("|"))
+      expect(tokens.length).toBeGreaterThanOrEqual(6)
+
+      const ref = await readRepoFile(reference)
+      expect(ref).toContain("accepts exactly these tokens")
+      const tableRows = ref.split("\n").filter((line) => line.startsWith("|"))
+      for (const token of tokens) {
+        expect(tableRows.some((row) => row.includes(`\`${token}\``))).toBe(true)
+      }
+    })
+  }
 
   // A fixed route succeeded only
   // when it returned a reviewer-shaped object with a top-level `findings` array

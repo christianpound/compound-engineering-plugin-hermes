@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { spawnSync } from "child_process"
 import {
   chmodSync,
@@ -23,6 +23,13 @@ const SCRIPT = path.join(
   "../../skills/ce-doc-review/scripts/peer-job-runner.py",
 )
 const FIXTURE = path.join(__dirname, "../fixtures/peer-job-runner-unit.py")
+
+// These drive real detached processes and real bounded waits, so several cases
+// legitimately run for seconds. The bounded-wait case measured 4.65s on CI --
+// 347ms under the 5s default -- which makes a timeout flake a matter of how
+// busy the runner is rather than whether the code is correct. Match the headroom
+// the other subprocess-heavy suites already take.
+setDefaultTimeout(20_000)
 
 const tempRoots: string[] = []
 function mkTempRoot(prefix: string): string {
@@ -61,7 +68,7 @@ afterAll(() => {
 
 // Fast supervisor cadence so second-scale windows classify quickly; the
 // idle/hard/byte windows themselves are set per test via the CE_PEER_* envs
-// (defaults stay 240s/630s/10MB in the script).
+// (defaults stay 240s idle / derived hard / 10MB in the script).
 const FAST = { CE_PEER_POLL_SECS: "0.2", CE_PEER_GRACE_SECS: "2" }
 
 type RunResult = { code: number; stdout: string; stderr: string; ms: number }

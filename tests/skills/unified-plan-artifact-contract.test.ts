@@ -33,6 +33,9 @@ const ceWorkDocs = readRepoFile("docs/skills/ce-work.md")
 const ceWorkEngines = readRepoFile(
   "skills/ce-work/references/execution-engines.md",
 )
+const crossModelExecution = readRepoFile(
+  "skills/ce-work/references/cross-model-execution.md",
+)
 const planMarkdownRendering = readRepoFile(
   "skills/ce-plan/references/markdown-rendering.md",
 )
@@ -103,7 +106,7 @@ describe("unified plan artifact contract", () => {
   })
 
   test("brainstorm writes requirements-only unified plan skeletons under docs/plans", () => {
-    expect(brainstormSections).toContain("docs/plans/YYYY-MM-DD-NNN-<type>-<topic>-plan")
+    expect(brainstormSections).toContain("<root>/plans/YYYY-MM-DD-NNN-<type>-<topic>-plan")
     expect(brainstormSections).toContain("artifact_readiness: requirements-only")
     expect(brainstormSections).toContain("product_contract_source: ce-brainstorm")
     // Requirements-only is slimmed for standalone readability: no Goal Launch
@@ -112,7 +115,7 @@ describe("unified plan artifact contract", () => {
     expect(brainstormSections).toContain("Do **not** emit a `## Goal Launch Block` or `## Reader Index`")
     expect(brainstormSections).toMatch(/omits empty\s+`Planning Contract`/)
 
-    expect(brainstormSkill).toContain("docs/plans/YYYY-MM-DD-NNN-<type>-<topic>-plan")
+    expect(brainstormSkill).toContain("<root>/plans/YYYY-MM-DD-NNN-<type>-<topic>-plan")
     expect(brainstormSkill).toContain("artifact_readiness: requirements-only")
     expect(brainstormSkill).toContain("product_contract_source: ce-brainstorm")
     expect(brainstormSkill).toContain("Do **not** emit a Goal Launch Block or Reader Index")
@@ -175,7 +178,7 @@ describe("unified plan artifact contract", () => {
     expect(planSkill).toContain("enriches that same artifact")
     expect(planSkill).toContain("this run enriches that same file in place")
     expect(planSkill).toContain("Search `docs/brainstorms/`")
-    expect(planSkill).toContain("create a new unified plan in `docs/plans/`")
+    expect(planSkill).toContain("create a new unified plan in `<root>/plans/`")
     expect(planSkill).toContain("product_contract_source: ce-plan-bootstrap")
     expect(planSkill).toContain("artifact_readiness: implementation-ready")
     expect(planSkill).toContain("Definition of Done")
@@ -251,10 +254,10 @@ describe("unified plan artifact contract", () => {
     expect(lfgNextWorkHandoff).toMatch(/do not extend or edit the prior plan/i)
   })
 
-  test("lfg carries implementation routing only at the ce-work seam", () => {
+  test("lfg carries per-stage routing carriers at each stage seam", () => {
     const carrier = sliceSection(
       lfg,
-      "## Implementation-only routing carrier",
+      "## Per-stage routing carriers",
       "1. Invoke the `ce-plan` skill",
     )
     expect(carrier).toContain("semantic intent")
@@ -270,6 +273,28 @@ describe("unified plan artifact contract", () => {
     expect(carrier).toContain("Never pass")
     expect(carrier).toContain("`ce-plan`")
     expect(carrier).toContain("planning or review")
+
+    // Per-stage routing: planning routes to a plan_model carrier; an unscoped
+    // directive binds to implementation only and never broadens; the upfront
+    // disambiguation question is interactive-gated and headless runs never ask.
+    expect(carrier).toContain("plan_model:<alias>")
+    expect(carrier).toContain("Planning** routes to `ce-plan`")
+    expect(carrier).toContain("Scoped directive")
+    expect(carrier).toContain("Unscoped directive")
+    expect(carrier).toContain("implementation stage only")
+    expect(carrier).toContain("never broaden an unscoped directive")
+    expect(carrier).toMatch(/ask exactly \*\*one\*\* upfront question/i)
+    expect(carrier).toMatch(/disable-model-invocation.*headless run, never ask/is)
+    expect(carrier).toContain("default path is mandatory")
+
+    // Step 1 threads the plan_model carrier to ce-plan beside the sanitized request.
+    const step1 = sliceSection(
+      lfg,
+      "1. Invoke the `ce-plan` skill",
+      "2. Invoke the `ce-work` skill",
+    )
+    expect(step1).toContain("prefix the invocation with its `plan_model:<alias>` carrier")
+    expect(step1).toMatch(/never woven into it/i)
 
     const step2 = sliceSection(
       lfg,
@@ -326,7 +351,7 @@ describe("unified plan artifact contract", () => {
     expect(docReviewTemplate).toContain("product_contract_source:ce-brainstorm")
     expect(docReviewTemplate).toContain("product_contract_source:ce-plan-bootstrap")
 
-    expect(codeReview).toContain("docs/plans/*.{md,html}")
+    expect(codeReview).toContain("<root>/plans/*.{md,html}")
     expect(codeReview).toContain("Product Contract` -> `### Requirements")
     expect(codeReview).toContain("readiness before checking completeness")
     expect(codeReview).toContain("must not trigger implementation-unit completeness findings")
@@ -336,7 +361,7 @@ describe("unified plan artifact contract", () => {
   })
 
   test("docs and adjacent handoffs use the new convention", () => {
-    expect(ideate).toContain("requirements-only unified plan under `docs/plans/`")
+    expect(ideate).toContain("requirements-only unified plan under `<root>/plans/`")
     expect(agents).toContain("New `ce-brainstorm` outputs are requirements-only unified plans")
     expect(agents).toContain("Historical `docs/brainstorms/*-requirements.*` files remain readable legacy inputs")
   })
@@ -417,7 +442,7 @@ describe("unified plan artifact contract", () => {
   test("ce-code-review discovery/extraction covers HTML and Product Contract requirements", () => {
     // Codex #972 P2: discovery must scan .html and extraction must read
     // Product Contract > Requirements, matching the completeness contract.
-    expect(codeReview).toContain("docs/plans/*.{md,html}")
+    expect(codeReview).toContain("<root>/plans/*.{md,html}")
     expect(codeReview).toMatch(/unified `Product Contract` -> `### Requirements`/)
     expect(codeReview).toMatch(/requirements-only artifact[\s\S]{0,80}product intent only/i)
   })
@@ -669,6 +694,115 @@ describe("session-settled decision contract", () => {
     expect(brainstormSynthesisSummary).toContain("Carrying forward:")
     expect(planDeepeningWorkflow).toContain(
       "never removes the annotation or inverts the decision",
+    )
+  })
+})
+
+describe("cross-layer ownership contract", () => {
+  test("both section contracts carry the one-owner rule and the duplication named-test clause", () => {
+    for (const doc of [planSections, brainstormSections]) {
+      expect(doc).toMatch(/One owner per rule; cite, don't restate\./)
+      expect(doc).toMatch(/Unlinked sibling\s+restatement/)
+      expect(doc).toMatch(/Bind external authorities; don't summarize them\./)
+      expect(doc).toMatch(/a rule stated in full\s+in more than one section/)
+    }
+  })
+
+  test("plan-sections registers KTD-IDs with the R/U grammar and typed authority order", () => {
+    expect(planSections).toContain("KTD-IDs (Key Technical Decisions")
+    expect(planSections).toContain("`KTD1.`")
+    expect(planSections).toContain("KTD-IDs on implementation-ready plans")
+    expect(planSections).toContain("no mass renumbering")
+    // Typed authority: R wins product behavior; KTD wins mechanism; units override neither.
+    expect(planSections).toMatch(/R wins on product\s+behavior/)
+    expect(planSections).toMatch(/KTD wins on implementation mechanism/)
+    expect(planSections).toMatch(/a unit overrides neither/)
+    // No mirror KTDs.
+    expect(planSections).toMatch(/Do \*\*not\*\* create a KTD that merely mirrors/)
+    expect(planMarkdownRendering).toContain("`KTD<N>.` plain prefix")
+  })
+
+  test("brainstorm Key Decisions are a provenance index with Governs links, not a second statement", () => {
+    expect(brainstormSections).toMatch(/provenance index entry/)
+    expect(brainstormSections).toContain("`Governs R5, R7`")
+    expect(brainstormSections).toMatch(
+      /must not create a KTD that merely mirrors\s+the\s+product decision/,
+    )
+    expect(brainstormSections).not.toContain(
+      "inherits these labels into plan KTDs",
+    )
+  })
+
+  test("synthesis routes settled product decisions and planning decisions to their distinct owners", () => {
+    expect(planSynthesisSummary).toMatch(
+      /settled product decisions.*labeled Product Contract Key Decisions.*exact `Governs R…` links/s,
+    )
+    expect(planSynthesisSummary).toMatch(
+      /settled planning(?:\/how)? decisions.*labeled Key Technical Decisions/s,
+    )
+  })
+
+  test("ce-plan preservation protects meaning + IDs and sanctions restructuring with its own note class", () => {
+    expect(planSkill).toContain("Meaning-preserving restructuring is sanctioned")
+    expect(planSkill).toContain("restructured, no scope change")
+    expect(planSkill).toContain(
+      "Preserve Product Contract meaning and stable IDs under Phase 0.3 step 3",
+    )
+    expect(planSkill).not.toContain("Preserve Product Contract IDs and content")
+    expect(planSkill).toContain(
+      "re-point every affected `Governs R…`, `Covers R…`, and inline `per R…` citation",
+    )
+    expect(planSkill).toContain(
+      "no pre-restructure catch-all link silently excludes a split-out requirement",
+    )
+    expect(planSkill).toContain("do **not** mirror it into a KTD")
+    // Unit Approach owns only unit-local content.
+    expect(planSkill).toContain("Unit-local content only")
+    // Settlement channel: KTD<N> for planning decisions, governed Rs for product decisions.
+    expect(planSkill).toContain("reverse-resolved through its `Governs R…` links")
+  })
+
+  test("ce-work packets reverse-resolve Product Key Decisions so settlement labels survive bounded reads", () => {
+    expect(ceWork).toContain("`Governs R…` links name the unit's cited R-IDs")
+    expect(ceWork).toContain("A KTD or Product Contract Key Decision carrying")
+  })
+
+  test("every executor handoff reverse-resolves labeled Product Contract Key Decisions", () => {
+    const planHandoff = readRepoFile("skills/ce-plan/references/plan-handoff.md")
+    const handoffs = [
+      sliceSection(
+        planSkill,
+        "- **Run it as a `/goal`**",
+        "- **Decide on the review's open items**",
+      ),
+      sliceSection(
+        planHandoff,
+        "- **Run it as a `/goal`**",
+        "- **Decide on the review's open items**",
+      ),
+      sliceSection(
+        ceWorkEngines,
+        "Copyable goal-mode prompt",
+        "Copyable dynamic-workflow prompt",
+      ),
+      sliceSection(
+        crossModelExecution,
+        "3. **Prepare one bounded unit packet.**",
+        "4. **Start one fixed author.**",
+      ),
+    ]
+
+    for (const handoff of handoffs) {
+      expect(handoff).toMatch(
+        /Product Contract Key Decision.*exact `Governs R…` links.*cited R-IDs/s,
+      )
+    }
+  })
+
+  test("deepening strengthens at the owning entry and never restates owned rules into siblings", () => {
+    expect(planDeepeningWorkflow).toContain("Strengthen at the owning entry.")
+    expect(planDeepeningWorkflow).toContain(
+      "Restate a rule a cited R or KTD already owns into a sibling section",
     )
   })
 })

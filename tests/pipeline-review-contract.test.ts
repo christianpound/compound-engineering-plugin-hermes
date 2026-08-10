@@ -317,10 +317,10 @@ describe("cross-model execution receipt seam parity (ce-work <-> lfg)", () => {
     const lfg = await readRepoFile("skills/lfg/SKILL.md")
     const carrier = sliceSection(
       lfg,
-      "## Implementation-only routing carrier",
+      "## Per-stage routing carriers",
       "1. Invoke the `ce-plan` skill",
     )
-    expect(carrier).toContain("remove the implementation-routing directive")
+    expect(carrier).toContain("Remove every routing directive")
     expect(carrier).toContain("Never pass")
     expect(carrier).toContain("`ce-plan`")
     expect(carrier).toContain("`ce-code-review`")
@@ -362,12 +362,22 @@ describe("ce-plan review contract", () => {
     expect(content).toContain("Document review is mandatory")
   })
 
-  test("uses headless mode by default and in pipeline context", async () => {
+  test("uses non-interactive mode by default and in pipeline context", async () => {
     const content = await readRepoFile("skills/ce-plan/references/plan-handoff.md")
+    const skillStub = await readRepoFile("skills/ce-plan/SKILL.md")
 
-    // Default at Phase 5.3.8 is `mode:headless` so users opt into deeper interactive review
+    // Default at Phase 5.3.8 is `mode:non-interactive` so users opt into deeper interactive review
     // explicitly from the post-generation menu rather than being forced through it.
-    expect(content).toContain("ce-doc-review` with `mode:headless`")
+    expect(content).toContain(
+      "Invoke the `ce-doc-review` skill with arguments `mode:non-interactive <plan-path>`",
+    )
+    expect(content).toContain("ce-doc-review` with `mode:non-interactive`")
+    expect(content).toContain(
+      "Pipeline runs invoke `ce-doc-review` with `mode:non-interactive` and the plan path",
+    )
+    expect(skillStub).toContain(
+      "The default mode for markdown is non-interactive (`mode:non-interactive`)",
+    )
     expect(content).not.toContain("skip document-review and return control")
 
     // The interactive walkthrough is opt-in via the post-generation menu, not automatic
@@ -380,16 +390,16 @@ describe("ce-plan review contract", () => {
     // Both executors are offered; ce-work is always the recommended default (it is the
     // correctly-layered entry point that reaches goal/workflow engines itself), while goal
     // mode is the opt-in preference for driving the work through the harness's goal loop.
-    expect(content).toContain("**Start `/ce-work`** - Build and ship the plan in this session")
+    expect(content).toContain("**Start `ce-work`** - Build and ship the plan in this session")
     expect(content).toContain("**Run it as a `/goal`**")
     expect(content).toMatch(/`ce-work` \(option 1\) always carries \*\(recommended\)\*/i)
     expect(content).toContain("Codex `create_goal` in the available tool list")
 
     // Deeper review is a first-class menu fixture so users can engage with surfaced findings
-    // without relying on free-form prompting; routed through ce-doc-review without headless mode.
+    // without relying on free-form prompting; routed through ce-doc-review without non-interactive mode.
     expect(content).toContain("**Decide on the review's open items**")
     expect(content).toContain("`ce-doc-review`")
-    expect(content).toContain("without** `mode:headless`")
+    expect(content).toContain("without** `mode:non-interactive`")
 
     // Deeper-review menu fixture is hidden when no actionable findings remain so the menu
     // collapses back to a 4-option AskUserQuestion-friendly shape on Claude Code. FYI-only
@@ -528,12 +538,12 @@ describe("ce-doc-review contract", () => {
     expect(synthesis).toContain("R30 Fix-Landed Matching Predicate")
   })
 
-  test("headless envelope surfaces new tiers distinctly", async () => {
+  test("non-interactive envelope surfaces new tiers distinctly", async () => {
     const synthesis = await readRepoFile(
       "skills/ce-doc-review/references/synthesis-and-presentation.md"
     )
 
-    // Bucket headers for the new tiers appear in the headless envelope template.
+    // Bucket headers for the new tiers appear in the non-interactive envelope template.
     // User-facing vocabulary: fixes / Proposed fixes / Decisions / FYI observations
     // maps to the safe_auto / gated_auto / manual / FYI internal enum values.
     expect(synthesis).toContain("Applied N fixes")
@@ -721,10 +731,10 @@ describe("ce-compound frontmatter schema expansion contract", () => {
       "skills/ce-compound/references/yaml-schema.md"
     )
 
-    expect(mapping).toContain("architecture_pattern` -> `docs/solutions/architecture-patterns/")
-    expect(mapping).toContain("design_pattern` -> `docs/solutions/design-patterns/")
-    expect(mapping).toContain("tooling_decision` -> `docs/solutions/tooling-decisions/")
-    expect(mapping).toContain("convention` -> `docs/solutions/conventions/")
+    expect(mapping).toContain("architecture_pattern` -> `<root>/solutions/architecture-patterns/")
+    expect(mapping).toContain("design_pattern` -> `<root>/solutions/design-patterns/")
+    expect(mapping).toContain("tooling_decision` -> `<root>/solutions/tooling-decisions/")
+    expect(mapping).toContain("convention` -> `<root>/solutions/conventions/")
   })
 })
 
@@ -807,9 +817,16 @@ describe("concept-teaching seam parity (ce-commit-push-pr <-> lfg)", () => {
     // The callsite passes the mode explicitly rather than relying on defaults
     expect(lfg).toContain("Invoke the `ce-commit-push-pr` skill with `mode:pipeline branding:on`.")
 
-    // The pre-DONE report line names the concept and the /ce-explain pointer
+    // The pre-DONE report names the concept and renders each user-runnable
+    // handoff for the active host rather than hardcoding one harness's syntax.
     expect(lfg).toContain("New concept introduced:")
-    expect(lfg).toContain("run /ce-explain")
+    expect(lfg).toContain("run <rendered ce-explain invocation> to go deeper")
+    expect(lfg).toContain("run <rendered ce-babysit-pr invocation> to watch it through review to merge")
+    for (const target of ["ce-explain <name>", "ce-babysit-pr <pr-url>"]) {
+      expect(lfg).toContain(`$${target}`)
+      expect(lfg).toContain(`/${target}`)
+    }
+    expect(lfg).toMatch(/default to `\/ce-explain <name>`[\s\S]{0,360}Codex[\s\S]{0,220}output one form only/i)
 
     // The callee documents the mode the caller passes
     expect(skill).toContain("mode:pipeline")
