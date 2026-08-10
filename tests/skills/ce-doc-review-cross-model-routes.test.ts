@@ -31,7 +31,7 @@ afterAll(() => {
 const REAL_TOOLS = [
   "bash", "sh", "jq", "python3", "date", "sed", "tr", "cat", "wc", "awk",
   "dirname", "basename", "mktemp", "env", "perl", "timeout", "gtimeout", "sleep", "rm",
-  "mv", "chmod", "cp", "printf", "kill", "mkdir",
+  "mv", "chmod", "cp", "printf", "kill", "mkdir", "grep", "tail", "ps",
 ]
 // A version-manager shim (pyenv/rbenv/perlbrew/mise) for an interpreter is a
 // wrapper *script*, not a symlink: `command -v python3` returns the shim, but
@@ -187,6 +187,13 @@ describe("cross-model-doc-review route safety (R17)", () => {
     expect(source).toContain("trap 'cleanup_temp' EXIT")
     expect(source).toContain('rm -f "$RAW_OUT"')
     expect(source).toContain('rm -rf "$PEER_WORKDIR"')
+    // Zombies report as Z+ on macOS; exact "Z" alone leaves them "alive".
+    expect(source).toContain('[ "${st#Z}" = "$st" ]')
+    // Match peer-job-runner: empty ps state => not alive; kill -0 only if ps missing.
+    expect(source).toContain("command -v ps")
+    expect(source).toContain("[ -n \"$st\" ] || return 1")
+    // After reap no longer waits, TERM/INT must wait the peer leader.
+    expect(source).toMatch(/reap "\$_term_peer"[\s\S]*?wait "\$_term_peer"/)
   })
 
   test("every route carries read-only / no-prompt / least-privilege flags and no NEVER-use flag", () => {
@@ -266,16 +273,24 @@ printf '%s' '{"structured_output":{"reviewer":"adversarial","findings":[],"resid
     expect(cmd).not.toContain("--bare")
     expect(cmd).toContain("--effort high")
     expect(cmd).toContain("--model opus")
+    expect(cmd).toContain("--output-format stream-json")
+    expect(cmd).toContain("--verbose")
   })
 
   test("grok CLI: deny Read + web/subagents off + dontAsk + effort high", () => {
     const cmd = emitAdapter("grok-cli")
     expect(cmd).toContain("--deny Read")
+    // Load-bearing with --deny Read: without --verbatim grok offloads a large
+    // prompt to a session file the peer is then forbidden to read back.
+    expect(cmd).toContain("--verbatim")
     expect(cmd).toContain("--disable-web-search")
     expect(cmd).toContain("--no-subagents")
     expect(cmd).toContain("--permission-mode dontAsk")
     expect(cmd).toContain("--effort high")
     expect(cmd).toContain("--model grok-4.5")
+    expect(cmd).toContain("--json-schema")
+    expect(cmd).toContain("--output-format json")
+    expect(cmd).not.toContain("stream-json")
   })
 
   test("cursor-agent routes: ask mode + sandbox enabled + scratch workspace", () => {
@@ -285,6 +300,7 @@ printf '%s' '{"structured_output":{"reviewer":"adversarial","findings":[],"resid
       expect(cmd).toContain("--trust")
       expect(cmd).toContain("--sandbox enabled")
       expect(cmd).toContain("--workspace")
+      expect(cmd).toContain("--output-format stream-json")
     }
     expect(emitAdapter("grok-cursor")).toContain("cursor-grok-4.5-high")
     expect(emitAdapter("cursor")).not.toContain("--model")
@@ -528,6 +544,22 @@ describe("cross-model-doc-review normalization (R18, KTD5)", () => {
     expect(out.cross_model_route).toBe("claude")
     expect(out.independence_verified).toBe(true)
   })
+
+  test("a trailing non-findings object in .text does not short-circuit recovery", () => {
+    // Taking a bare `last` off the .text stream hands back the trailing object,
+    // which normalization then drops — losing a review that was right there.
+    const grokStub =
+      `#!/bin/sh\ncat >/dev/null\nprintf '%s' '{"text":"{\\"reviewer\\": \\"adversarial\\", \\"findings\\": [{\\"section\\": \\"X\\", \\"title\\": \\"real\\"}], \\"residual_risks\\": [], \\"deferred_questions\\": []}{\\"done\\": true}"}'\n`
+    const { env } = sandbox(["grok"], grokStub)
+    const doc = makeDoc()
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "adversarial", doc, "plan", "none", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings[0].title).toBe("real")
+  }, 20_000)
 
   test("drops the return when findings is not an array", () => {
     const badStub =

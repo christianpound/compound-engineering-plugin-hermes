@@ -36,7 +36,7 @@ afterAll(() => {
 const REAL_TOOLS = [
   "bash", "sh", "jq", "python3", "date", "sed", "tr", "cat", "wc", "awk",
   "dirname", "basename", "mktemp", "env", "perl", "timeout", "gtimeout", "sleep", "rm",
-  "mv", "chmod", "cp", "printf", "kill", "mkdir", "git",
+  "mv", "chmod", "cp", "printf", "kill", "mkdir", "git", "grep", "tail", "ps",
 ]
 // A version-manager shim (pyenv/rbenv/perlbrew/mise) for an interpreter is a
 // wrapper *script*, not a symlink: `command -v python3` returns the shim, but
@@ -192,6 +192,13 @@ describe("cross-model-adversarial-review route safety", () => {
     const source = readFileSync(SCRIPT, "utf8")
     expect(source).toContain('rm -rf "$RAW_DIR"')
     expect(source).toContain("trap 'on_term' TERM INT")
+    // Zombies report as Z+ on macOS; exact "Z" alone leaves them "alive".
+    expect(source).toContain('[ "${st#Z}" = "$st" ]')
+    // Match peer-job-runner: empty ps state => not alive; kill -0 only if ps missing.
+    expect(source).toContain("command -v ps")
+    expect(source).toContain("[ -n \"$st\" ] || return 1")
+    // After reap no longer waits, TERM/INT must wait the peer leader.
+    expect(source).toMatch(/reap "\$_term_peer"[\s\S]*?wait "\$_term_peer"/)
   })
 
   test("every route carries read-only / no-prompt / least-privilege flags and no NEVER-use flag", () => {
@@ -326,6 +333,9 @@ printf '%s' '{"structured_output":{"reviewer":"adversarial","findings":[],"resid
     expect(cmd).toContain("Skill")
     expect(cmd).toContain("--effort high")
     expect(cmd).toContain("--model opus")
+    // stream-json + --verbose: PEERLOG grows mid-run for run_timeout_cmd idle (#1270).
+    expect(cmd).toContain("--output-format stream-json")
+    expect(cmd).toContain("--verbose")
     // In-tree review: Read must remain available (unlike doc-review's --tools "").
     expect(cmd).not.toContain("--tools")
     expect(cmd).not.toContain("--bare")
@@ -336,6 +346,9 @@ printf '%s' '{"structured_output":{"reviewer":"adversarial","findings":[],"resid
     expect(cmd).toContain("--deny Edit")
     expect(cmd).toContain("--deny Write")
     expect(cmd).toContain("--deny Bash")
+    // Without --verbatim grok offloads a large prompt to a session file and
+    // sends only a preview, so the peer reviews a diff it never received.
+    expect(cmd).toContain("--verbatim")
     expect(cmd).toContain("--disable-web-search")
     expect(cmd).toContain("--no-subagents")
     expect(cmd).toContain("--permission-mode dontAsk")
@@ -343,6 +356,10 @@ printf '%s' '{"structured_output":{"reviewer":"adversarial","findings":[],"resid
     expect(cmd).toContain("--model grok-4.5")
     expect(cmd).toContain("--cwd <repo-root>")
     expect(cmd).not.toContain("--deny Read")
+    // Schema forces buffered json — no PEERLOG idle signal (#1270 residual).
+    expect(cmd).toContain("--json-schema")
+    expect(cmd).toContain("--output-format json")
+    expect(cmd).not.toContain("stream-json")
   })
 
   test("cursor-agent routes: ask mode + sandbox + repo workspace", () => {
@@ -352,11 +369,48 @@ printf '%s' '{"structured_output":{"reviewer":"adversarial","findings":[],"resid
       expect(cmd).toContain("--trust")
       expect(cmd).toContain("--sandbox enabled")
       expect(cmd).toContain("--workspace <repo-root>")
+      expect(cmd).toContain("--output-format stream-json")
     }
     expect(emitAdapter("grok-cursor")).toContain("cursor-grok-4.5-high")
     expect(emitAdapter("cursor")).not.toContain("--model")
     expect(emitAdapter("composer")).toContain("composer-2.5-fast")
   })
+
+  test("stream-json NDJSON result event yields findings and model receipt", () => {
+    // Production claude stream-json writes NDJSON; structured_output + modelUsage
+    // live on the terminal type=result event (#1270 Bugbot).
+    const ndjson =
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"}]}}\n' +
+      '{"type":"result","subtype":"success","structured_output":{"reviewer":"adversarial","findings":[{"title":"from-stream"}],"residual_risks":[],"testing_gaps":[]},"modelUsage":{"claude-opus-4-8-20260115":{"inputTokens":10}}}\n'
+    const stub = `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${ndjson.replace(/'/g, `'\\''`)}'\n`
+    const { env } = sandbox(["claude"], stub)
+    const runDir = makeRunDir()
+    const r = run(["codex", "claude", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-claude.json")
+    const out = JSON.parse(readFileSync(path.join(runDir, "adversarial-claude.json"), "utf8"))
+    expect(out.findings[0].title).toBe("from-stream")
+    expect(out.model_actual).toBe("claude-opus-4-8-20260115")
+  }, 20_000)
+
+  test("silent PEERLOG on a streaming route is reaped by idle before the hard cap", () => {
+    // Fake CLI writes nothing to stdout; heartbeat still fires on stderr. Idle
+    // poll must reap before HARD_SECS (same shape as elevation-dispatch AE4).
+    const stub = "#!/bin/sh\ncat >/dev/null\nsleep 60\n"
+    const { env } = sandbox(["claude"], stub)
+    const runDir = makeRunDir()
+    const started = Date.now()
+    const r = run(["codex", "claude", "HEAD", runDir], runDir, {
+      ...env,
+      CROSS_MODEL_IDLE_SECS: "3",
+      CROSS_MODEL_HARD_SECS: "120",
+      CROSS_MODEL_HEARTBEAT_SECS: "1",
+    })
+    const elapsedSec = (Date.now() - started) / 1000
+    expect(r.stderr).toContain("peer alive")
+    expect(r.stderr).toMatch(/peer output idle|output idle/)
+    expect(r.files).not.toContain("adversarial-claude.json")
+    expect(elapsedSec).toBeLessThan(40)
+  }, 45_000)
 
   test("adapters target repo-root, not shared run-dir fold-in path", () => {
     expect(emitAdapter("codex")).toContain("-C <repo-root>")
@@ -764,6 +818,149 @@ describe("cross-model-adversarial-review normalization", () => {
       readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"),
     )
     expect(out.findings[0].title).toBe("t")
+  }, 20_000)
+
+  test("top-level sequential recovery keeps last-shaped-wins (final empty beats earlier draft)", () => {
+    // Populated-over-empty is only for nested .text stubs. On sequential stdout a
+    // draft with findings then a terminal findings:[] must publish the empty final
+    // object — not revive the draft as false positives.
+    const codexStub =
+      `#!/bin/sh\ncat >/dev/null\nprintf '%s' '{"reviewer":"adversarial","findings":[{"title":"stale draft"}],"residual_risks":[],"testing_gaps":[]}\n{"reviewer":"adversarial","findings":[],"residual_risks":[],"testing_gaps":[]}'\n`
+    const { env } = sandbox(["codex"], codexStub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "codex", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-codex.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-codex.json"), "utf8"),
+    )
+    expect(out.findings).toHaveLength(0)
+  }, 20_000)
+
+  // An envelope route returns the review inside a JSON *string* (`.text`), so its
+  // braces are not scan candidates: raw_decode consumes the envelope whole, finds
+  // no `findings` key on it, and moves past — the review is there and is dropped.
+  const grokTextEnvelope = (payload: string) =>
+    `#!/bin/sh\ncat >/dev/null\nprintf '%s' '${payload}'\n`
+
+  test("grok .text envelope: a review wrapped in a JSON string is recovered", () => {
+    // Grok also emits an empty stub ahead of the real object; last-shaped-wins
+    // must still select the populated one. jq rejects the pair as trailing
+    // garbage, so this lands in recover_findings_json, not the fast path.
+    const stub = grokTextEnvelope(
+      String.raw`{"text":"{ \"reviewer\": \"adversarial\", \"findings\": [] }{ \"reviewer\": \"adversarial\", \"findings\": [{\"title\": \"wrapped\"}], \"residual_risks\": [], \"testing_gaps\": [] }"}`,
+    )
+    const { env } = sandbox(["grok"], stub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings).toHaveLength(1)
+    expect(out.findings[0].title).toBe("wrapped")
+  }, 20_000)
+
+  test("grok structuredOutput (camelCase) is read, not just structured_output", () => {
+    // The live grok-cli envelope names its parsed schema output `structuredOutput`;
+    // the snake_case probe alone never matches, so a complete review reads as none.
+    const stub = grokTextEnvelope(
+      String.raw`{"structuredOutput":{"reviewer": "adversarial", "findings": [{"title": "camel"}], "residual_risks": [], "testing_gaps": []},"stopReason":"end_turn"}`,
+    )
+    const { env } = sandbox(["grok"], stub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings[0].title).toBe("camel")
+  }, 20_000)
+
+  test("empty structuredOutput does not preempt a populated .text review", () => {
+    // Empty findings arrays are schema-valid; accepting them before .text would
+    // publish "peer found nothing" while the real review sits in the string field.
+    const stub = grokTextEnvelope(
+      String.raw`{"structuredOutput":{"reviewer":"adversarial","findings":[],"residual_risks":[],"testing_gaps":[]},"text":"{\"reviewer\": \"adversarial\", \"findings\": [{\"title\": \"from-text\"}], \"residual_risks\": [], \"testing_gaps\": []}","stopReason":"end_turn"}`,
+    )
+    const { env } = sandbox(["grok"], stub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings).toHaveLength(1)
+    expect(out.findings[0].title).toBe("from-text")
+  }, 20_000)
+
+  test("empty structuredOutput alone is still a zero-finding review", () => {
+    // After .text has nothing better, empty-but-shaped structuredOutput remains a
+    // legitimate "peer found nothing" outcome — do not treat empty as parse failure.
+    const stub = grokTextEnvelope(
+      String.raw`{"structuredOutput":{"reviewer":"adversarial","findings":[],"residual_risks":[],"testing_gaps":[]},"stopReason":"end_turn"}`,
+    )
+    const { env } = sandbox(["grok"], stub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings).toHaveLength(0)
+  }, 20_000)
+
+  test("grok .text envelope: a populated review outranks an empty stub in either order", () => {
+    // Last-shaped-wins alone silently publishes an empty review when the stub
+    // trails the real object, which reads downstream as "peer found nothing".
+    const stub = grokTextEnvelope(
+      String.raw`{"text":"{ \"reviewer\": \"adversarial\", \"findings\": [{\"title\": \"cascade\"}], \"residual_risks\": [], \"testing_gaps\": [] }{ \"reviewer\": \"adversarial\", \"findings\": [], \"residual_risks\": [], \"testing_gaps\": [] }"}`,
+    )
+    const { env } = sandbox(["grok"], stub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings).toHaveLength(1)
+    expect(out.findings[0].title).toBe("cascade")
+  }, 20_000)
+
+  test("recovery does not stop at an envelope's own empty findings beside .text", () => {
+    // An outer `findings: []` used to satisfy the scan and end it, so the real
+    // review nested in the sibling string was never looked at.
+    const stub = grokTextEnvelope(
+      String.raw`peer: warming up` +
+        "\n" +
+        String.raw`{"findings": [], "text": "{\"reviewer\": \"adversarial\", \"findings\": [{\"title\": \"nested\"}], \"residual_risks\": [], \"testing_gaps\": []}"}`,
+    )
+    const { env } = sandbox(["grok"], stub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings[0].title).toBe("nested")
+  }, 20_000)
+
+  test("grok .text envelope: recovery unwraps the string when jq cannot read the log", () => {
+    // A stray non-JSON line makes every jq branch fail on the whole file, so this
+    // reaches recover_findings_json — which used to consume the envelope whole,
+    // see no `findings` key on it, and skip the review sitting inside `.text`.
+    const stub = grokTextEnvelope(
+      String.raw`peer: warming up` +
+        "\n" +
+        String.raw`{"text":"{\"reviewer\": \"adversarial\", \"findings\": [{\"title\": \"single\"}], \"residual_risks\": [], \"testing_gaps\": []}"}`,
+    )
+    const { env } = sandbox(["grok"], stub)
+    const runDir = makeRunDir()
+    const r = run(["claude", "grok", "HEAD", runDir], runDir, env)
+    expect(r.files).toContain("adversarial-grok.json")
+    const out = JSON.parse(
+      readFileSync(path.join(runDir, "adversarial-grok.json"), "utf8"),
+    )
+    expect(out.findings[0].title).toBe("single")
   }, 20_000)
 })
 

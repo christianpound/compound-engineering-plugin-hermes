@@ -1,12 +1,26 @@
 ---
 name: ce-doc-review
 description: Review requirements, plans, or specs with role-specific lenses. Use when the user wants to improve an existing planning document.
-argument-hint: "[mode:headless] [path/to/document.md]"
+argument-hint: "[mode:non-interactive] [path/to/document.md]"
 ---
 
 # Document Review
 
 Review requirements or plan documents through multi-persona analysis. Dispatches generic subagents seeded with skill-local reviewer prompt assets, auto-applies `safe_auto` fixes, and routes remaining findings through a four-option interaction (per-finding walk-through, auto-resolve with best judgment, Append-to-Open-Questions, Report-only) for user decision.
+
+## Setup
+
+Run this once at the start of this invocation, before any subagent dispatch, and follow the directives it prints — except where one conflicts with this skill's own rules on asking the user questions, whether those rules are scoped to a non-interactive mode or apply in every mode, in which case this skill's rules win and no blocking question is asked. Run the fence exactly as written, as its own command: do not pipe or filter it (no `head`, `tail`, or `grep`), do not truncate its output, and do not bundle it into a batch with other commands. Its output opens with a `=== skill context` header and ends with `CE_CONTEXT_END`; if you received one of those lines without the other, the output was truncated — rerun the fence verbatim once. That recovery is the only rerun: otherwise do not rerun it within the same invocation; a later invocation of this or any other skill runs its own. If no Node runtime is available the skill proceeds unchanged.
+
+```bash
+SKILL_DIR="<absolute path of the directory containing the SKILL.md you just read>";
+NODE="$(for c in node nodejs; do command -v "$c" >/dev/null 2>&1 && "$c" -e '' >/dev/null 2>&1 && { echo "$c"; break; }; done)";
+if [ -n "$NODE" ]; then
+"$NODE" "$SKILL_DIR/scripts/context.mjs" || echo "context script failed; continue with the skill's normal behavior";
+else
+echo "no Node runtime; continue with the skill's normal behavior";
+fi
+```
 
 ## Interactive mode rules
 
@@ -15,11 +29,11 @@ Review requirements or plan documents through multi-persona analysis. Dispatches
 
 ## Phase 0: Detect Mode
 
-Check the invocation arguments for `mode:headless`. Arguments may contain a document path, `mode:headless`, or both. Tokens starting with `mode:` are flags, not file paths — strip them from the arguments and use the remaining token (if any) as the document path for Phase 1.
+Check the invocation arguments for `mode:non-interactive` or its deprecated alias `mode:headless`. Arguments may contain a document path, either mode token, or both. Tokens starting with `mode:` are flags, not file paths — strip them from the arguments and use the remaining token (if any) as the document path for Phase 1. Both tokens together is not a conflict.
 
-If `mode:headless` is present, set **headless mode** for the rest of the workflow.
+If `mode:non-interactive` or `mode:headless` is present, set **non-interactive mode** for the rest of the workflow.
 
-**Headless mode** changes the interaction model, not the classification boundaries. Apply the same judgment about which tier each finding belongs in. Only the delivery of non-`safe_auto` findings changes:
+**Non-interactive mode** changes the interaction model, not the classification boundaries. Apply the same judgment about which tier each finding belongs in. Only the delivery of non-`safe_auto` findings changes:
 
 - `safe_auto` fixes are applied silently (same as interactive)
 - `gated_auto`, `manual`, and FYI findings are returned as structured text for the caller to handle — no blocking-question prompts, no interactive routing
@@ -27,26 +41,38 @@ If `mode:headless` is present, set **headless mode** for the rest of the workflo
 
 The caller receives findings with their original classifications intact and decides what to do with them.
 
-**Headless argument contract:** Require `mode:headless <document-path>`, for example `mode:headless docs/plans/my-plan.md`.
+**Non-interactive argument contract:** Require `mode:non-interactive <document-path>`, for example `mode:non-interactive <path-to-doc>.md`. `mode:headless` is a deprecated alias for the same contract.
 
-If `mode:headless` is not present, run in default interactive mode with the routing question, walk-through, and bulk-preview behaviors documented in `references/walkthrough.md` and `references/bulk-preview.md`.
+If neither `mode:non-interactive` nor `mode:headless` is present, run in default interactive mode with the routing question, walk-through, and bulk-preview behaviors documented in `references/walkthrough.md` and `references/bulk-preview.md`.
+
+## Artifact Root
+
+This skill reviews a document at a path it is handed and, in interactive mode with no path given, discovers the most recent plan under `<root>/plans/`. Resolve `<root>` (per the block below) **only in that no-path discovery branch** — the sole place it composes a `<root>/` path. A review of an explicitly-named document reads that path directly and never resolves `<root>`; do not run root resolution at the start of every run, since a valid non-interactive or absolute-path review (e.g. `/tmp/plan.md`, possibly outside any git repo) must not depend on a repo root or CE config it does not need.
+
+<!-- ce-docs-root:start -->
+**Resolve the CE artifact root `<root>` before composing any artifact path.**
+
+- **Read** `docs_root` from `<repo-root>/.compound-engineering/config.local.yaml`, then `config.yaml`; first non-empty value wins (`<repo-root>` = `git rev-parse --show-toplevel`). Unset -> `<root>` is `docs`, exactly as before.
+- **Validate** a set value: a repo-relative directory whose real, symlink-resolved path stays inside the repo and is neither the repo root nor under `.git/`. Otherwise stop with an error naming `docs_root` and the value -- never fall back to `docs`.
+- **Use** `<root>` as the sole artifact location: create it if absent, compose each path as `<root>/<subdir>` with this skill's own subdirectory, and never also read `docs`.
+<!-- ce-docs-root:end -->
 
 ## Phase 1: Get and Analyze Document
 
 **If a document path is provided:** Read it, then proceed. If the Read fails or the file is not on disk, apply the missing-document gate below instead of continuing.
 
-**If no document is specified (interactive mode):** Ask which document to review, or find the most recent in `docs/brainstorms/` or `docs/plans/` using a file-search/glob tool (e.g., Glob in Claude Code).
+**If no document is specified (interactive mode):** Ask which document to review, or find the most recent under `<root>/plans/` using a file-search/glob tool (e.g., Glob in Claude Code).
 
-**If no document is specified (headless mode):** Output "Review failed: headless mode requires a document path. Expected arguments: mode:headless <path>" and stop without dispatching reviewers.
+**If no document is specified (non-interactive mode):** Output "Review failed: non-interactive mode requires a document path. Expected arguments: mode:non-interactive <path>" and stop without dispatching reviewers.
 
 **Missing-document gate — verify before any dispatch.** Persona reviewers read documents from the filesystem, and several run without Bash, so they cannot read git refs — a path that exists only on a branch that is not checked out wastes the entire persona team discovering they cannot proceed (issue #925). Before Phase 2, confirm every resolved document path is readable on disk (the Read above succeeded). Location does not matter: an absolute path outside the checkout (e.g. `/tmp/plan.md`) or a doc in another checkout reviews fine. If any path is not readable, do not dispatch any personas:
 
 - **Interactive mode:** stop and name the missing path(s): "Document(s) not found on disk: <paths>. Check out the branch containing them, use a worktree, or provide corrected readable paths before retrying the review."
-- **Headless mode:** output "Review failed: document(s) not found on disk: <paths>. Expected input: paths to readable files on disk; check out the branch containing them or provide corrected paths." and return without dispatching reviewers.
+- **Non-interactive mode:** output "Review failed: document(s) not found on disk: <paths>. Expected input: paths to readable files on disk; check out the branch containing them or provide corrected paths." and return without dispatching reviewers.
 
 ### Classify Document Type
 
-Classify the document by reading its **content shape**, not its file path. Path is a tie-breaker hint, not the primary signal — a brainstorm-style doc placed under `docs/plans/` should still classify as `requirements`, and a plan-shaped doc under `docs/brainstorms/` should still classify as `plan`. The reviewers below operate differently depending on this classification, so misclassifying a plan-shaped doc as a requirements doc (or vice versa) produces noisy or under-scrutinized findings.
+Classify the document by reading its **content shape and metadata**, not its file path. Under the unified plan contract a requirements-only and an implementation-ready plan both live in `<root>/plans/`, so location no longer signals type — a requirements-style doc classifies as `requirements` and a plan-shaped doc as `plan` wherever either sits. The reviewers below operate differently depending on this classification, so misclassifying a plan-shaped doc as a requirements doc (or vice versa) produces noisy or under-scrutinized findings.
 
 First check for the unified artifact contract:
 
@@ -72,7 +98,7 @@ Use these signals to decide:
 - Repo-relative file paths to create/modify/test
 - Prose framing focused on technical decisions, sequencing, and implementer-facing detail
 
-**Tie-breaker rule.** When the content signals are mixed or sparse, fall back to path: legacy `docs/brainstorms/` → `requirements`, `docs/plans/` → `plan` unless unified metadata says otherwise. When neither path location applies, treat the dominant content shape as authoritative; if shape is genuinely ambiguous, default to `requirements` (the more conservative classification — it activates fewer plan-specific feasibility checks).
+**Tie-breaker rule.** When the content signals are mixed or sparse, treat the dominant content shape as authoritative; if shape is genuinely ambiguous, default to `requirements` (the more conservative classification — it activates fewer plan-specific feasibility checks). Path location does not disambiguate type under the unified plan contract, where requirements-only and implementation-ready plans share `<root>/plans/`; a legacy `origin: docs/brainstorms/...` field, when present, still reads as a `plan` signal per the frontmatter list above.
 
 Pass the classification result to each persona via the `{document_type}` slot in the subagent template. Personas read this and adapt their analysis accordingly.
 
@@ -234,7 +260,7 @@ Launch one detached runner job per activated trio lens plus one `whole-doc` swee
 
 ## Phases 3-5: Synthesis, Presentation, and Next Action
 
-After all dispatched agents return — **including any cross-model `<reviewer-name>-<provider>.json` returns** — read `references/synthesis-and-presentation.md` for the synthesis pipeline (validate, anchor-based gate, dedup, conditional agreement promotion, resolve contradictions, auto-promotion, route by three tiers with FYI subsection), `safe_auto` fix application, headless-envelope output, and the handoff to the routing question. Peer findings enter ordinary synthesis, but only an artifact with `independence_verified: true` counts as an independent reviewer for promotion.
+After all dispatched agents return — **including any cross-model `<reviewer-name>-<provider>.json` returns** — read `references/synthesis-and-presentation.md` for the synthesis pipeline (validate, anchor-based gate, dedup, conditional agreement promotion, resolve contradictions, auto-promotion, route by three tiers with FYI subsection), `safe_auto` fix application, non-interactive-envelope output, and the handoff to the routing question. Peer findings enter ordinary synthesis, but only an artifact with `independence_verified: true` counts as an independent reviewer for promotion.
 
 For the four-option routing question and per-finding walk-through (interactive mode), read `references/walkthrough.md`. For the bulk-action preview used by best-judgment routing, Append-to-Open-Questions, and walk-through `Auto-resolve with best judgment on the rest`, read `references/bulk-preview.md`. Do not load these files before agent dispatch completes.
 

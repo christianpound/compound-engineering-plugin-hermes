@@ -71,6 +71,14 @@ A conditional section of a generated PR description, added by agent judgment whe
 
 ## Skill orchestration
 
+### Dispatch skill
+A Skill whose workflow depends on delegating work to shipped subagents — reviewers, scouts, fixers — rather than performing every pass in the orchestrator's own context, and that therefore carries the shared Skill-context directives so a harness default cannot silently strip the delegation its flow assumes.
+
+Membership follows whether the workflow depends on dispatch actually happening — for independent contexts whose agreement carries evidential weight, or for the isolation and coverage a single context cannot provide. A skill stays outside the set only when performing the delegated work in its own context is a first-class path rather than a degrade: delegation that exists purely for parallelism can be spent as time instead, so such a skill applies its work sequentially in-context and ships no directives.
+
+### Skill-context directives
+The counter-directive block a Dispatch skill emits as tool output at the start of each invocation — authorizing its shipped subagents against harness defaults that gate agent use, forbidding a harness constraint from being re-narrated as a user preference, keeping confirmation steps live under standing autonomy framing, and refusing independence credit for lens work done in one context. Delivery as tool output is the mechanism, not a packaging detail: the same text as static skill prose fails to outrank the harness default, and evidence that prose sufficed for one Skill transfers to no other.
+
 ### Model tier
 A semantic cost class for a dispatched sub-agent — extraction (cheapest capable, for retrieval and quoting), generation (mid-tier, for evidence-driven work and mechanical verification), or ceiling (the orchestrator's own model, inherited by omitting any model selection) — declared once per Skill and referenced by tier name so model names never hardcode into skill content.
 
@@ -85,7 +93,7 @@ The inline remnant left in a Skill when load-bearing content moves to a referenc
 ### Detached job
 A delegated worker process launched into its own session so it outlives the shell tool call that started it, with its state — status word, log, identity, and result — kept in a durable job directory the orchestrator polls between turns instead of awaiting in place.
 
-The launching call returns as soon as the job exists; supervision (idle and hard limits, process-tree reaping) runs inside the detached worker, while the caller keeps its own aggregate deadline and proceeds without the job when that passes. A job publishes exactly one terminal record, atomically, and nothing in the detached path may prompt for input.
+The launching call returns as soon as the job exists; supervision (idle and hard limits, process-tree reaping) runs inside the detached worker, while the caller keeps its own aggregate deadline and proceeds without the job when that passes. A job publishes exactly one terminal record, atomically, and nothing in the detached path may prompt for input. Process-tree reaping is a guarantee supplied by the host operating system's process-grouping primitive rather than one the job contract can assume: where a grouping does not outlive the process that leads it, reaping must be re-derived from a primitive that does, or descendants survive the terminal record.
 
 Liveness and progress are distinct signals, and an idle window detects only whichever one its watched stream actually carries. A worker-emitted heartbeat proves the supervising process is alive while saying nothing about whether the delegate is producing; conversely a delegate that buffers its output until completion looks identical to a wedged one. Which signal a given delegate can supply is a property of that delegate to be measured, not assumed, before an idle window is trusted to distinguish a working run from a stalled one.
 
@@ -95,16 +103,30 @@ An additive delegated run that sends the host workflow's review or judgment brie
 ### Model identity receipt
 The serving backend's own report of which model actually handled a delegated run, recorded alongside the requested model so the two can disagree visibly. A run's model identity is verified only by such a receipt — never by the request parameters or the model's own text — and outputs without one are labeled as requested-but-unverified; logic that weights cross-model agreement follows the receipt, not the request.
 
+### Handoff seam
+The point in a calling Skill where completed work triggers a follow-on Skill in the same run — distinct from a Session handoff, which carries continuity to a fresh session. A seam that states only intent ("auto-invoke X") invites the caller's agent to reproduce the callee's mechanics from memory; a hardened seam pins the invocation mechanism (the platform's skill-invocation primitive, so the callee's instructions actually load) and, when the callee runs a stateful protocol, explicitly forbids starting that protocol's mechanics directly.
+
+### Context-absent agent
+An agent performing a Skill-shaped action without that Skill's instructions loaded in context — typically reconstructing a half-remembered command, recognizable by parameter values that drift from the Skill's documented defaults. Prose in the unloaded Skill cannot reach it; the only channels that do are the seam it entered through and the output of the tools it runs, which is why fail-closed refusals in bundled CLIs carry their own recovery path.
+
 ## Review and workflow vocabulary
 
 ### Reviewer persona
 A single-lens reviewer role that evaluates work from one specific perspective — security, correctness, scope, design, and so on. Review Skills dispatch a panel of personas as subagents and merge their findings.
 
 ### Confidence anchor
-A discrete, self-scored confidence value on a fixed small scale, each level tied to a behavioral criterion the model can honestly apply, used to gate and rank review findings instead of a continuous score that invites false precision. Each review Skill sets its own actionable threshold; corroboration across personas promotes a finding by one level.
+A discrete, self-scored confidence value on a fixed small scale, each level tied to a behavioral criterion the model can honestly apply, used to gate and rank review findings instead of a continuous score that invites false precision. Each review Skill sets its own actionable threshold; corroboration across personas promotes a finding by one level, but only when those personas meet the bar in Independence.
+
+### Independence
+A property of the *execution context* a reviewer or researcher ran in, not of the lens it applied: two findings count as independent only when they came from separately dispatched contexts. Two personas reasoned inside one context are two perspectives, not two witnesses.
+
+Only independence in this sense licenses corroboration — promoting a Confidence anchor, counting agreement, or describing a result as independently confirmed. When dispatch does not happen and the work runs inline, the findings remain valid but the corroboration signal does not exist, and the run says what coverage was lost rather than promoting on it.
 
 ### Autofix class
 The classification of a review finding by how safely its proposed fix can be applied: applied silently, applied only after user confirmation, left for a human to resolve, or recorded as advisory with no action.
+
+### Rendering floor
+The single, surface-agnostic contract for how a review finding is presented for a human decision across every output surface a Skill emits — interactive walkthrough, batch report, unattended envelope, one-line preview. It fixes a decision-first field order (recommendation and a plain-language consequence first; mechanism capped and last) and a domain-agnostic policy for opaque tokens: identifiers a reader cannot resolve without opening the reviewed document or code are glossed by their function (navigation, provenance, or mechanism) or moved out of the decision block. Each surface maps its own layout onto the floor instead of carrying its own copy of the rules, so strengthening one surface cannot silently leave the others behind.
 
 ### Headless mode
 An explicit opt-in mode that runs a Skill unattended, with no user prompts — it produces a written report as its deliverable and conservatively defers genuinely ambiguous decisions rather than guessing. A Skill may expose a separate depth selector inside headless mode when automations need an explicit coverage tradeoff; the non-interactive contract and the work depth remain distinct decisions.
