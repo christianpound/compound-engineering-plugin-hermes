@@ -1,0 +1,69 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # Check for upstream changes daily at 09:00 UTC
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/EveryInc/compound-engineering-plugin.git
+          git fetch upstream
+
+      - name: Check for changes
+        id: check
+        run: |
+          CURRENT=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/main)
+          if [ "$CURRENT" = "$UPSTREAM" ]; then
+            echo "No upstream changes."
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Upstream has new commits: $CURRENT -> $UPSTREAM"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge upstream
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git merge upstream/main --no-edit
+          # Bump our patch version to signal a sync
+          # (plugin.yaml version tracks upstream; we don't override it)
+
+      - name: Push changes
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git push origin main
+
+      - name: Create PR if merge has conflicts
+        if: steps.check.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          # If the merge above failed due to conflicts, create a PR
+          git merge --abort 2>/dev/null || true
+          git checkout -b sync-upstream-$(date +%Y%m%d)
+          git merge upstream/main --no-edit || true
+          # If there are conflicts, push the branch and create a PR
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            git add -A || true
+            git commit -m "sync: merge upstream (resolve conflicts manually)" || true
+            git push origin sync-upstream-$(date +%Y%m%d) || true
+            echo "PR needed — check the branch"
+          fi

@@ -1,0 +1,16 @@
+name: compound-engineering
+version: 3.19.0
+description: "Brainstorm, plan, debug, review, and compound learnings with AI agents. Hermes-adapted port of EveryInc/compound-engineering-plugin."
+author:
+  name: Christian Pound
+  url: https://github.com/christianpound
+homepage: https://github.com/christianpound/compound-engineering-hermes
+repository: https://github.com/christianpound/compound-engineering-hermes
+license: MIT
+entry_point: "__init__.py:register"
+keywords:
+  - compound-engineering
+  - workflow-automation
+  - code-review
+  - brainstorming
+  - planning
