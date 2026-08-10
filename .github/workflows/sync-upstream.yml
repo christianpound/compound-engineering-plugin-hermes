@@ -10,12 +10,16 @@ permissions:
   contents: write
   pull-requests: write
 
+concurrency:
+  group: sync-upstream-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fork
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -23,7 +27,7 @@ jobs:
       - name: Add upstream remote
         run: |
           git remote add upstream https://github.com/EveryInc/compound-engineering-plugin.git
-          git fetch upstream
+          git fetch upstream main
 
       - name: Check for changes
         id: check
@@ -33,37 +37,82 @@ jobs:
           if [ "$CURRENT" = "$UPSTREAM" ]; then
             echo "No upstream changes."
             echo "changed=false" >> $GITHUB_OUTPUT
+          elif gh pr list --state open --json headRefName --jq '.[].headRefName' | grep -q '^sync-upstream-'; then
+            echo "A sync PR is already open — skipping today's run to avoid piling up PRs."
+            echo "changed=false" >> $GITHUB_OUTPUT
           else
-            echo "Upstream has new commits: $CURRENT -> $UPSTREAM"
+            echo "Upstream has new commits: ${CURRENT:0:10} -> ${UPSTREAM:0:10}"
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Merge upstream
+        id: merge
         if: steps.check.outputs.changed == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git merge upstream/main --no-edit
-          # Bump our patch version to signal a sync
-          # (plugin.yaml version tracks upstream; we don't override it)
-
-      - name: Push changes
-        if: steps.check.outputs.changed == 'true'
-        run: |
-          git push origin main
-
-      - name: Create PR if merge has conflicts
-        if: steps.check.outputs.changed == 'true'
-        continue-on-error: true
-        run: |
-          # If the merge above failed due to conflicts, create a PR
-          git merge --abort 2>/dev/null || true
-          git checkout -b sync-upstream-$(date +%Y%m%d)
-          git merge upstream/main --no-edit || true
-          # If there are conflicts, push the branch and create a PR
-          if git diff --name-only --diff-filter=U | grep -q .; then
-            git add -A || true
-            git commit -m "sync: merge upstream (resolve conflicts manually)" || true
-            git push origin sync-upstream-$(date +%Y%m%d) || true
-            echo "PR needed — check the branch"
+          if git merge upstream/main --no-edit; then
+            echo "clean=true" >> $GITHUB_OUTPUT
+          else
+            echo "clean=false" >> $GITHUB_OUTPUT
           fi
+
+      - name: Resolve conflicts (upstream wins, fork compat surface is ours)
+        # The fork is a compat layer on top of upstream: upstream owns
+        # everything except the 5 fork-created compat files. Version files
+        # (package.json, plugin.json, marketplace.json, release-please
+        # manifest/config) are identical in structure upstream and must TRACK
+        # upstream — keeping fork versions would drift release:validate.
+        # The compat files do not exist upstream, so --ours only matters if
+        # upstream ever adds same-named files (e.g. its own plugin.yaml).
+        if: steps.merge.outputs.clean == 'false'
+        run: |
+          # Resolve everything to upstream, then re-apply the fork's own
+          # compat surface.
+          git checkout --theirs .
+          git checkout --ours -- \
+            plugin.yaml \
+            __init__.py \
+            transform_hermes.py \
+            README-hermes.md \
+            .github/workflows/sync-upstream.yml 2>/dev/null || true
+          git add -A
+          git commit -m "chore: sync upstream (resolve conflicts)" || echo "nothing to commit"
+
+      - name: Verify merged tree (fork gates)
+        # Informational — CI on the PR is the authoritative gate. This tells
+        # the PR body whether the merge is ready to merge or needs work.
+        id: verify
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          bun install --frozen-lockfile
+          if bun run release:validate && bun test; then
+            echo "green=true" >> $GITHUB_OUTPUT
+          else
+            echo "green=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Open sync PR
+        # Branch protection on main requires PRs (see AGENTS.md merge
+        # policy), so every sync lands as a PR. CI runs ci.yml on the PR;
+        # the required test status check gates the merge.
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          BRANCH="sync-upstream-$(date +%Y%m%d)"
+          git checkout -b "$BRANCH"
+          git push origin "$BRANCH" || true
+          if [ "${{ steps.verify.outputs.green }}" = "false" ]; then
+            STATUS="The merged tree does not pass the fork gates (release:validate / bun test). Fix before merging."
+          else
+            STATUS="The merged tree passes the fork gates. Waiting on CI + review."
+          fi
+          cat > /tmp/pr-body.md <<-EOF
+          Daily upstream sync from EveryInc/compound-engineering-plugin.
+
+          **Status:** $STATUS
+
+          Branch protection on main requires PR review. Merge once CI passes.
+          EOF
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: sync upstream $(date +%Y-%m-%d)" \
+            --body-file /tmp/pr-body.md || echo "PR creation failed - branch $BRANCH pushed, open PR manually."
